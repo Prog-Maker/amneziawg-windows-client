@@ -124,6 +124,51 @@ must be converted from SVG and embedded via `rsrc`.
 
 **Fix:** Add `-ldflags="-H windowsgui"` to the build command.
 
+## MSI Installer Build
+
+### Prerequisites
+- **WiX Toolset v3.14.1** — downloaded automatically to `installer\.deps\wix\`
+- **customactions.dll** — extracted from a previous MSI via `dark.exe` (no gcc needed)
+
+### Quick Build (no MinGW)
+
+```powershell
+# 1. Download WiX (NuGet – fast)
+Invoke-WebRequest "https://www.nuget.org/api/v2/package/WiX/3.14.1" -OutFile "$env:TEMP\wix.zip"
+Expand-Archive "$env:TEMP\wix.zip" -DestinationPath "$env:TEMP\wix-nuget"
+Copy-Item "$env:TEMP\wix-nuget\tools" -Destination "installer\.deps\wix\bin" -Recurse
+
+# 2. Extract customactions.dll from installed MSI (one-time)
+$installDir = "installer\.msi-extract"
+New-Item -ItemType Directory -Force $installDir | Out-Null
+$wix = "installer\.deps\wix\bin"
+$msiPath = (Get-CimInstance Win32_Product | Where-Object Name -like '*Amnezia*').LocalPackage
+& "$wix\dark.exe" $msiPath -x $installDir
+Copy-Item "$installDir\Binary\customactions.dll" "installer\amd64\customactions.dll"
+
+# 3. Prepare platform binaries
+New-Item -ItemType Directory -Force "installer\amd64", "amd64" | Out-Null
+Copy-Item amneziawg.exe amd64\amneziawg.exe -Force
+Copy-Item "C:\Program Files\AmneziaWG\awg.exe" amd64\awg.exe -Force
+Copy-Item "C:\Program Files\AmneziaWG\wintun.dll" amd64\wintun.dll -Force
+
+# 4. Compile and link MSI
+$version = "1.0.3"
+$wix = "installer\.deps\wix\bin"
+Set-Location installer
+& "$wix\candle" -nologo -dWIREGUARD_VERSION="$version" -dWIREGUARD_PLATFORM="amd64" -out "amd64\wireguard.wixobj" -arch x64 wireguard.wxs
+& "$wix\light" -nologo -spdb -sval -out "..\Installers\amneziawg-amd64-$version.msi" "amd64\wireguard.wixobj"
+
+# Output: Installers\amneziawg-amd64-1.0.3.msi
+```
+
+### Full build.bat (requires llvm-mingw)
+
+The original `installer\build.bat` cross-compiles for x86/amd64/arm64 using:
+- `llvm-mingw` for `customactions.c` → `customactions.dll`
+- WiX `candle.exe` + `light.exe`
+- Output: `dist\amneziawg-<arch>-<version>.msi`
+
 ## CI/CD Build
 
 The original `build.bat` script handles the full pipeline (download deps, render icons,

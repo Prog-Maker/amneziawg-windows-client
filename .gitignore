@@ -20,3 +20,10 @@
 
 amneziawg-*.exe
 stderr.log
+
+# Release artifacts
+/amneziawg.exe
+/Installers/
+
+# Vendored dependencies
+/vendor/
