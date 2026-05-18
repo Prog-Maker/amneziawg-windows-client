@@ -14,5 +14,9 @@
 *.swp
 *.bak
 *.syso
+!rsrc.syso
 .idea
 *.ico
+
+amneziawg-*.exe
+stderr.log

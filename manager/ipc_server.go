@@ -20,8 +20,9 @@ import (
 	"golang.org/x/sys/windows/svc"
 
 	"github.com/amnezia-vpn/amneziawg-windows-client/updater"
+	"github.com/amnezia-vpn/amneziawg-windows-client/services"
 	"github.com/amnezia-vpn/amneziawg-windows/conf"
-	"github.com/amnezia-vpn/amneziawg-windows/services"
+	awgservices "github.com/amnezia-vpn/amneziawg-windows/services"
 )
 
 var (
@@ -147,7 +148,7 @@ func (s *ManagerService) Stop(tunnelName string) error {
 }
 
 func (s *ManagerService) WaitForStop(tunnelName string) error {
-	serviceName, err := services.ServiceNameOfTunnel(tunnelName)
+	serviceName, err := awgservices.ServiceNameOfTunnel(tunnelName)
 	if err != nil {
 		return err
 	}
@@ -178,7 +179,7 @@ func (s *ManagerService) Delete(tunnelName string) error {
 }
 
 func (s *ManagerService) State(tunnelName string) (TunnelState, error) {
-	serviceName, err := services.ServiceNameOfTunnel(tunnelName)
+	serviceName, err := awgservices.ServiceNameOfTunnel(tunnelName)
 	if err != nil {
 		return 0, err
 	}
@@ -271,6 +272,21 @@ func (s *ManagerService) Quit(stopTunnelsOnQuit bool) (alreadyQuit bool, err err
 
 func (s *ManagerService) UpdateState() UpdateState {
 	return updateState
+}
+
+func (s *ManagerService) Exclusions(tunnelName string) (services.ExclusionList, error) {
+	list, err := services.LoadExclusions(tunnelName)
+	if err != nil {
+		return services.ExclusionList{}, err
+	}
+	return *list, nil
+}
+
+func (s *ManagerService) SetExclusions(tunnelName string, list services.ExclusionList) error {
+	if s.elevatedToken == 0 {
+		return windows.ERROR_ACCESS_DENIED
+	}
+	return services.SaveExclusions(tunnelName, &list)
 }
 
 func (s *ManagerService) Update() {
@@ -451,6 +467,40 @@ func (s *ManagerService) ServeConn(reader io.Reader, writer io.Writer) {
 			}
 		case UpdateMethodType:
 			s.Update()
+		case ExclusionsMethodType:
+			var tunnelName string
+			err := decoder.Decode(&tunnelName)
+			if err != nil {
+				return
+			}
+			list, retErr := s.Exclusions(tunnelName)
+			err = encoder.Encode(list)
+			if err != nil {
+				return
+			}
+			err = encoder.Encode(errToString(retErr))
+			if err != nil {
+				return
+			}
+		case SetExclusionsMethodType:
+			var tunnelName string
+			err := decoder.Decode(&tunnelName)
+			if err != nil {
+				return
+			}
+			var list services.ExclusionList
+			err = decoder.Decode(&list)
+			if err != nil {
+				return
+			}
+			retErr := s.SetExclusions(tunnelName, list)
+			if retErr == nil {
+				IPCServerNotifyExclusionsChange(tunnelName)
+			}
+			err = encoder.Encode(errToString(retErr))
+			if err != nil {
+				return
+			}
 		default:
 			return
 		}
@@ -538,4 +588,8 @@ func IPCServerNotifyUpdateProgress(dp updater.DownloadProgress) {
 func IPCServerNotifyManagerStopping() {
 	notifyAll(ManagerStoppingNotificationType, false)
 	time.Sleep(time.Millisecond * 200)
+}
+
+func IPCServerNotifyExclusionsChange(tunnelName string) {
+	notifyAll(ExclusionsChangeNotificationType, false, tunnelName)
 }

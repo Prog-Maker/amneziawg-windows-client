@@ -11,6 +11,7 @@ import (
 	"os"
 	"sync"
 
+	"github.com/amnezia-vpn/amneziawg-windows-client/services"
 	"github.com/amnezia-vpn/amneziawg-windows-client/updater"
 	"github.com/amnezia-vpn/amneziawg-windows/conf"
 )
@@ -37,6 +38,7 @@ const (
 	ManagerStoppingNotificationType
 	UpdateFoundNotificationType
 	UpdateProgressNotificationType
+	ExclusionsChangeNotificationType
 )
 
 type MethodType int
@@ -55,6 +57,8 @@ const (
 	QuitMethodType
 	UpdateStateMethodType
 	UpdateMethodType
+	ExclusionsMethodType
+	SetExclusionsMethodType
 )
 
 var (
@@ -182,6 +186,15 @@ func InitializeIPCClient(reader, writer, events *os.File) {
 				}
 				for cb := range updateProgressCallbacks {
 					cb.cb(dp)
+				}
+			case ExclusionsChangeNotificationType:
+				var tunnelName string
+				err = decoder.Decode(&tunnelName)
+				if err != nil || len(tunnelName) == 0 {
+					continue
+				}
+				for cb := range exclusionsChangeCallbacks {
+					cb.cb(tunnelName)
 				}
 			}
 		}
@@ -431,6 +444,46 @@ func IPCClientUpdate() error {
 	return rpcEncoder.Encode(UpdateMethodType)
 }
 
+func IPCClientExclusions(tunnelName string) (list services.ExclusionList, err error) {
+	rpcMutex.Lock()
+	defer rpcMutex.Unlock()
+
+	err = rpcEncoder.Encode(ExclusionsMethodType)
+	if err != nil {
+		return
+	}
+	err = rpcEncoder.Encode(tunnelName)
+	if err != nil {
+		return
+	}
+	err = rpcDecoder.Decode(&list)
+	if err != nil {
+		return
+	}
+	err = rpcDecodeError()
+	return
+}
+
+func IPCClientSetExclusions(tunnelName string, list services.ExclusionList) (err error) {
+	rpcMutex.Lock()
+	defer rpcMutex.Unlock()
+
+	err = rpcEncoder.Encode(SetExclusionsMethodType)
+	if err != nil {
+		return
+	}
+	err = rpcEncoder.Encode(tunnelName)
+	if err != nil {
+		return
+	}
+	err = rpcEncoder.Encode(list)
+	if err != nil {
+		return
+	}
+	err = rpcDecodeError()
+	return
+}
+
 func IPCClientRegisterTunnelChange(cb func(tunnel *Tunnel, state, globalState TunnelState, err error)) *TunnelChangeCallback {
 	s := &TunnelChangeCallback{cb}
 	tunnelChangeCallbacks[s] = true
@@ -479,4 +532,20 @@ func IPCClientRegisterUpdateProgress(cb func(dp updater.DownloadProgress)) *Upda
 
 func (cb *UpdateProgressCallback) Unregister() {
 	delete(updateProgressCallbacks, cb)
+}
+
+type ExclusionsChangeCallback struct {
+	cb func(tunnelName string)
+}
+
+var exclusionsChangeCallbacks = make(map[*ExclusionsChangeCallback]bool)
+
+func IPCClientRegisterExclusionsChange(cb func(tunnelName string)) *ExclusionsChangeCallback {
+	s := &ExclusionsChangeCallback{cb}
+	exclusionsChangeCallbacks[s] = true
+	return s
+}
+
+func (cb *ExclusionsChangeCallback) Unregister() {
+	delete(exclusionsChangeCallbacks, cb)
 }

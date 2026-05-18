@@ -510,7 +510,7 @@ func (tp *TunnelsPage) onEditTunnel() {
 		return
 	}
 
-	if config := runEditDialog(tp.Form(), tunnel); config != nil {
+	if config, exclusions := runEditDialog(tp.Form(), tunnel); config != nil {
 		go func() {
 			priorState, err := tunnel.State()
 			tunnel.Delete()
@@ -519,14 +519,22 @@ func (tp *TunnelsPage) onEditTunnel() {
 			if err == nil && err2 == nil && (priorState == manager.TunnelStarting || priorState == manager.TunnelStarted) {
 				tunnel.Start()
 			}
+			// Save exclusions after tunnel is created
+			if err2 == nil && exclusions != nil {
+				manager.IPCClientSetExclusions(config.Name, *exclusions)
+			}
 		}()
 	}
 }
 
 func (tp *TunnelsPage) onAddTunnel() {
-	if config := runEditDialog(tp.Form(), nil); config != nil {
+	if config, exclusions := runEditDialog(tp.Form(), nil); config != nil {
 		// Save new
 		tp.addTunnel(config)
+		// Save exclusions after tunnel is created
+		if exclusions != nil {
+			manager.IPCClientSetExclusions(config.Name, *exclusions)
+		}
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 
 	"github.com/amnezia-vpn/amneziawg-windows-client/l18n"
 	"github.com/amnezia-vpn/amneziawg-windows-client/manager"
+	"github.com/amnezia-vpn/amneziawg-windows-client/services"
 	"github.com/amnezia-vpn/amneziawg-windows-client/ui/syntax"
 	"github.com/amnezia-vpn/amneziawg-windows/conf"
 )
@@ -29,19 +30,22 @@ type EditDialog struct {
 	config                          conf.Config
 	lastPrivateKey                  string
 	blockUntunneledTraficCheckGuard bool
+	exclusions                      services.ExclusionList
+	exclusionsDomainEdit            *walk.TextEdit
+	exclusionsIPEdit                *walk.TextEdit
 }
 
-func runEditDialog(owner walk.Form, tunnel *manager.Tunnel) *conf.Config {
+func runEditDialog(owner walk.Form, tunnel *manager.Tunnel) (*conf.Config, *services.ExclusionList) {
 	dlg, err := newEditDialog(owner, tunnel)
 	if showError(err, owner) {
-		return nil
+		return nil, nil
 	}
 
 	if dlg.Run() == walk.DlgCmdOK {
-		return &dlg.config
+		return &dlg.config, &dlg.exclusions
 	}
 
-	return nil
+	return nil, nil
 }
 
 func newEditDialog(owner walk.Form, tunnel *manager.Tunnel) (*EditDialog, error) {
@@ -62,8 +66,12 @@ func newEditDialog(owner walk.Form, tunnel *manager.Tunnel) (*EditDialog, error)
 		// Creating a new tunnel, create a new private key and use the default template
 		pk, _ := conf.NewPrivateKey()
 		dlg.config = conf.Config{Interface: conf.Interface{PrivateKey: *pk}}
+		dlg.exclusions = services.ExclusionList{}
 	} else {
 		dlg.config, _ = tunnel.StoredConfig()
+		if ex, err := manager.IPCClientExclusions(tunnel.Name); err == nil {
+			dlg.exclusions = ex
+		}
 	}
 
 	layout := walk.NewGridLayout()
@@ -118,11 +126,54 @@ func newEditDialog(owner walk.Form, tunnel *manager.Tunnel) (*EditDialog, error)
 	}
 	layout.SetRange(dlg.syntaxEdit, walk.Rectangle{0, 2, 2, 1})
 
+	// --- Exclusions section (row 3) ---
+	exclusionsLabel, err := walk.NewTextLabel(dlg)
+	if err != nil {
+		return nil, err
+	}
+	layout.SetRange(exclusionsLabel, walk.Rectangle{0, 3, 2, 1})
+	exclusionsLabel.SetText(l18n.Sprintf("Split tunneling — traffic to these destinations bypasses VPN:"))
+	exclusionsLabel.SetTextAlignment(walk.AlignHNearVFar)
+
+	// Domains
+	domainsLabel, err := walk.NewTextLabel(dlg)
+	if err != nil {
+		return nil, err
+	}
+	layout.SetRange(domainsLabel, walk.Rectangle{0, 4, 1, 1})
+	domainsLabel.SetTextAlignment(walk.AlignHFarVCenter)
+	domainsLabel.SetText(l18n.Sprintf("&Domains:"))
+
+	if dlg.exclusionsDomainEdit, err = walk.NewTextEdit(dlg); err != nil {
+		return nil, err
+	}
+	layout.SetRange(dlg.exclusionsDomainEdit, walk.Rectangle{1, 4, 1, 1})
+	dlg.exclusionsDomainEdit.SetMinMaxSize(walk.Size{0, 60}, walk.Size{0, 120})
+	dlg.exclusionsDomainEdit.SetText(strings.Join(dlg.exclusions.Domains, "\r\n"))
+	dlg.exclusionsDomainEdit.SetToolTipText(l18n.Sprintf("Enter one domain per line (e.g., example.com)"))
+
+	// IP Ranges
+	ipLabel, err := walk.NewTextLabel(dlg)
+	if err != nil {
+		return nil, err
+	}
+	layout.SetRange(ipLabel, walk.Rectangle{0, 5, 1, 1})
+	ipLabel.SetTextAlignment(walk.AlignHFarVCenter)
+	ipLabel.SetText(l18n.Sprintf("IP &ranges:"))
+
+	if dlg.exclusionsIPEdit, err = walk.NewTextEdit(dlg); err != nil {
+		return nil, err
+	}
+	layout.SetRange(dlg.exclusionsIPEdit, walk.Rectangle{1, 5, 1, 1})
+	dlg.exclusionsIPEdit.SetMinMaxSize(walk.Size{0, 60}, walk.Size{0, 120})
+	dlg.exclusionsIPEdit.SetText(strings.Join(dlg.exclusions.IPRanges, "\r\n"))
+	dlg.exclusionsIPEdit.SetToolTipText(l18n.Sprintf("Enter one CIDR per line (e.g., 192.168.1.0/24)"))
+
 	buttonsContainer, err := walk.NewComposite(dlg)
 	if err != nil {
 		return nil, err
 	}
-	layout.SetRange(buttonsContainer, walk.Rectangle{0, 3, 2, 1})
+	layout.SetRange(buttonsContainer, walk.Rectangle{0, 6, 2, 1})
 	buttonsContainer.SetLayout(walk.NewHBoxLayout())
 	buttonsContainer.Layout().SetMargins(walk.Margins{})
 
@@ -347,6 +398,32 @@ func (dlg *EditDialog) onSaveButtonClicked() {
 	if err != nil {
 		showErrorCustom(dlg, l18n.Sprintf("Unable to create new configuration"), err.Error())
 		return
+	}
+
+	// Parse and validate exclusions
+	dlg.exclusions = services.ExclusionList{}
+	if domainsText := dlg.exclusionsDomainEdit.Text(); domainsText != "" {
+		for _, line := range strings.Split(domainsText, "\n") {
+			d := strings.TrimSpace(line)
+			d = strings.TrimRight(d, "\r")
+			if d != "" {
+				dlg.exclusions.Domains = append(dlg.exclusions.Domains, d)
+			}
+		}
+	}
+	if ipText := dlg.exclusionsIPEdit.Text(); ipText != "" {
+		for _, line := range strings.Split(ipText, "\n") {
+			ipr := strings.TrimSpace(line)
+			ipr = strings.TrimRight(ipr, "\r")
+			if ipr != "" {
+				_, _, err := net.ParseCIDR(ipr)
+				if err != nil {
+					showWarningCustom(dlg, l18n.Sprintf("Invalid CIDR"), l18n.Sprintf("‘%s’ is not a valid CIDR notation.", ipr))
+					return
+				}
+				dlg.exclusions.IPRanges = append(dlg.exclusions.IPRanges, ipr)
+			}
+		}
 	}
 
 	dlg.config = *cfg

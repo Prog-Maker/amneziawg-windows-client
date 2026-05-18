@@ -46,6 +46,7 @@ func RunUI() {
 	for mtw == nil {
 		mtw, err = NewManageTunnelsWindow()
 		if err != nil {
+			showErrorCustom(nil, "NewManageTunnelsWindow failed", err.Error())
 			time.Sleep(time.Millisecond * 400)
 		}
 	}
@@ -53,6 +54,7 @@ func RunUI() {
 	for tray == nil {
 		tray, err = NewTray(mtw)
 		if err != nil {
+			showErrorCustom(nil, "NewTray failed", err.Error())
 			if version.OsIsCore() {
 				noTrayAvailable = true
 				break
